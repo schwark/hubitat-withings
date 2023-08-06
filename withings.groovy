@@ -10,6 +10,7 @@ import hubitat.helper.InterfaceUtils
 
 def appVersion() { return "4.0" }
 def appName() { return "Withings Support" }
+def updateFreq() { return 60 }
 
 definition(
 	name: "${appName()}",
@@ -35,14 +36,22 @@ def installed() {
 }
 
 def updated() {
+	refreshToken()
 	refresh()
+	initialize()
+}
+
+def getSleepUpdate() {
+	withings(verb: 'sleep', action: 'getsummary', last_update: getTime()/1000 as Integer - updateFreq(), data_fields: 'night_events')
 }
 
 def initialize() {
 	unschedule()
+	schedule('*/5 * * ? * *', getSleepUpdate)
 }
 
 def uninstalled() {
+	unschedule()
 	def children = getAllChildDevices()
 	log.info("uninstalled: children = ${children}")
 	children.each {
@@ -64,21 +73,36 @@ def parseResponse(map, resp) {
 		if('requesttoken' == cmd) {
 			state.accessToken = json.body.access_token
 			state.refreshToken = json.body.refresh_token
+			state.tokenExpiry = json.body.expires_in
+			runIn(state.tokenExpiry - 100, 'refreshToken')
 		} else if ('getdevice' == cmd) {
 			state.devices = json.body.devices
+		} else if ('getsummary' == cmd) {
+			def points = json.body.series
+			points?.each() { 
+				if (it.data?.night_events) {
+					if(it.data.night_events['1']) {
+						// got in bed
+						
+					} else if(it.data.night_events['4']) {
+						// got out of bed
+
+					}
+				} 
+			}
 		}
-	} else if (json.status <= 200 && !state.retry) {
-		state.retry = true
-		// authentication failed, retry
-		debug("authentication failed.. retrying...")
-		getToken(true)
-		pauseExecution(1000)
-		withings(map)
+	} else if (json.status == 401 || json.status <= 200) {
+		logError('Authentication failed - please use new authorization code to update preferences')
 	}
 }
 
+def refreshToken() {
+	getToken(true)
+}
+
 def getToken(force=false) {
-	if(force || !state.accessToken) {
+	if(force) state.accessToken = null
+	if(!state.accessToken) {
 		def grant_type = (state.accessToken ? 'refresh_token' : 'authorization_code')
 		withings(verb: 'oauth2', action: 'requesttoken', grant_type: grant_type, code: authCode, client_id: '5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302',
 			client_secret: 'a376fb34b3d397bf9916c5d2f73534a985382e605857046f49618873ffc95214',
@@ -168,6 +192,6 @@ private debug(logMessage, fromMethod="") {
     }
 }
 
-private logError(fromMethod, e) {
+private logError(e, fromMethod="") {
     log.error("[Withings] ERROR: (${fromMethod}): ${e}")
 }
