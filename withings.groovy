@@ -48,7 +48,7 @@ def installed() {
 }
 
 def updated() {
-	refreshToken()
+	getToken()
 	refresh()
 	initialize()
 }
@@ -75,9 +75,13 @@ def uninstalled() {
 }
 
 def refresh() {
-	getToken()
 	getDevices()
+	getSleepUpdate()
 }
+
+/*
+[body:[more:false, offset:0, series:[[created:1691302331, data:[night_events:{"1":[0,4140],"2":[1860,2280,3780,1260,3840],"3":[3120,3480,1680,3720,2220],"4":[3960,10260]}], date:2023-08-06, enddate:1691312520, hash_deviceid:d6e462e9979d57079d75ba82deeed035b27b9c7b, id:3609165417, model:32, model_id:63, modified:1691313009, startdate:1691298300, timezone:America/Los_Angeles]]], status:0]
+*/
 
 def parseResponse(map, resp) {
 	def user = map.user
@@ -89,7 +93,7 @@ def parseResponse(map, resp) {
 			state["accessToken${user}"] = json.body.access_token
 			state["refreshToken${user}"] = json.body.refresh_token
 			state["tokenExpiry${user}"] = json.body.expires_in
-			runIn(json.body.expires_in - 100, 'refreshToken')
+			runIn(json.body.expires_in - 100, 'renewToken')
 		} else if ('getdevice' == cmd) {
 			state["devices${user}"] = json.body.devices
 		} else if ('getsummary' == cmd) {
@@ -108,22 +112,20 @@ def parseResponse(map, resp) {
 		}
 	} else if (json.status == 401 || json.status <= 200) {
 		logError('Authentication failed - please use new authorization code to update preferences')
+		unschedule()
 	}
 }
 
-def refreshToken() {
+def renewToken() {
 	getToken(true)
 }
 
-def getToken(force=false) {
+def getToken(renew=false) {
 	for(i in 1..numUsers) {
-		if(force) state["accessToken${i}"] = null
-		if(!state["accessToken${i}"]) {
-			def grant_type = (state["accessToken${i}"] ? 'refresh_token' : 'authorization_code')
-			withings(user: i, verb: 'oauth2', action: 'requesttoken', grant_type: grant_type, code: settings."authCode${i}", client_id: '5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302',
-				client_secret: 'a376fb34b3d397bf9916c5d2f73534a985382e605857046f49618873ffc95214',
-				redirect_uri: 'https://www.yahoo.com/')
-		}
+		def grant_type = (renew ? 'refresh_token' : 'authorization_code')
+		withings(user: i, verb: 'oauth2', action: 'requesttoken', grant_type: grant_type, code: settings."authCode${i}", client_id: '5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302',
+			client_secret: 'a376fb34b3d397bf9916c5d2f73534a985382e605857046f49618873ffc95214',
+			redirect_uri: 'https://www.yahoo.com/')
 	}
 }
 
