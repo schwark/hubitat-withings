@@ -25,11 +25,23 @@ definition(
 )
 
 preferences {
-	section("Get your Authorization Code by logging into your Withings account <a target='_blank' rel='noreferrer noopener' href='https://account.withings.com/oauth2_user/authorize2?response_type=code&client_id=5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302&scope=user.info,user.metrics,user.activity&redirect_uri=https://www.yahoo.com/&state=notreallyusedinthisapp'>here</a>") {
-		input "debugMode", "bool", title: "Enable debugging", defaultValue: true
-		input "authCode", "text", title: "Authorization Code", required: true
+	page(name: "configPage")
+}
+
+def configPage(){
+    dynamicPage(name: "configPage", title: "Configure/Edit User Auth Codes:", install: true, uninstall: true) {
+		section("Get your Authorization Code for each user by logging into your Withings account once per user <a target='_blank' rel='noreferrer noopener' href='https://account.withings.com/oauth2_user/authorize2?response_type=code&client_id=5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302&scope=user.info,user.metrics,user.activity&redirect_uri=https://www.yahoo.com/&state=notreallyusedinthisapp'>here</a>"){
+			input("debugMode", "bool", title: "Enable debugging", defaultValue: true)
+			input("numUsers", "number", title: "How many users?", submitOnChange: true, range: "1..10")
+			if(numUsers){
+				for(i in 1..numUsers){
+					input "authCode${i}", "text", title: "Authorization Code for User ${i}", required: true
+				}
+			}
+		}
 	}
 }
+
 
 def installed() {
 	initialize()
@@ -42,12 +54,15 @@ def updated() {
 }
 
 def getSleepUpdate() {
-	withings(verb: 'sleep', action: 'getsummary', last_update: getTime()/1000 as Integer - updateFreq(), data_fields: 'night_events')
+	def since = (now()/1000).toInteger() - updateFreq()
+	for(i in 1..numUsers) {
+		withings(user: i, verb: 'sleep', action: 'getsummary', lastupdate: since, data_fields: 'night_events')
+	}
 }
 
 def initialize() {
 	unschedule()
-	schedule('*/5 * * ? * *', getSleepUpdate)
+	runEvery1Minute("getSleepUpdate")
 }
 
 def uninstalled() {
@@ -65,25 +80,25 @@ def refresh() {
 }
 
 def parseResponse(map, resp) {
-	def json = resp.data
+	def user = map.user
 	def cmd = map.action
+	def json = resp.data
 	debug(json)
 	if(json.status == 0) {
-		state.retry = false
 		if('requesttoken' == cmd) {
-			state.accessToken = json.body.access_token
-			state.refreshToken = json.body.refresh_token
-			state.tokenExpiry = json.body.expires_in
-			runIn(state.tokenExpiry - 100, 'refreshToken')
+			state["accessToken${user}"] = json.body.access_token
+			state["refreshToken${user}"] = json.body.refresh_token
+			state["tokenExpiry${user}"] = json.body.expires_in
+			runIn(json.body.expires_in - 100, 'refreshToken')
 		} else if ('getdevice' == cmd) {
-			state.devices = json.body.devices
+			state["devices${user}"] = json.body.devices
 		} else if ('getsummary' == cmd) {
 			def points = json.body.series
 			points?.each() { 
 				if (it.data?.night_events) {
 					if(it.data.night_events['1']) {
 						// got in bed
-						
+
 					} else if(it.data.night_events['4']) {
 						// got out of bed
 
@@ -101,26 +116,33 @@ def refreshToken() {
 }
 
 def getToken(force=false) {
-	if(force) state.accessToken = null
-	if(!state.accessToken) {
-		def grant_type = (state.accessToken ? 'refresh_token' : 'authorization_code')
-		withings(verb: 'oauth2', action: 'requesttoken', grant_type: grant_type, code: authCode, client_id: '5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302',
-			client_secret: 'a376fb34b3d397bf9916c5d2f73534a985382e605857046f49618873ffc95214',
-			redirect_uri: 'https://www.yahoo.com/')
+	for(i in 1..numUsers) {
+		if(force) state["accessToken${i}"] = null
+		if(!state["accessToken${i}"]) {
+			def grant_type = (state["accessToken${i}"] ? 'refresh_token' : 'authorization_code')
+			withings(user: i, verb: 'oauth2', action: 'requesttoken', grant_type: grant_type, code: settings."authCode${i}", client_id: '5801801f0848ed8c1d740253e9c78c43fc11da46e147cf5477e78e6d2f208302',
+				client_secret: 'a376fb34b3d397bf9916c5d2f73534a985382e605857046f49618873ffc95214',
+				redirect_uri: 'https://www.yahoo.com/')
+		}
 	}
 }
 
 def getDevices() {
-	withings(verb: 'user', action: 'getdevice')
+	for(i in 1..numUsers) {
+		withings(user: i, verb: 'user', action: 'getdevice')
+	}
 }
 
 def withings(map) {
 	def verb = map.verb
-	def params = map
+	def user = map.user
+	def params = map.clone()
+	def accessToken = state["accessToken${user}"]
 	params.remove('verb')
+	params.remove('user')
 
-	def headers = state.accessToken ? [
-		Authorization: "Bearer ${state.accessToken}"
+	def headers = accessToken ? [
+		Authorization: "Bearer ${accessToken}"
     ] : [:]
 
 	def url = "https://wbsapi.withings.net/v2/${verb}"
@@ -140,8 +162,12 @@ private getComponent(device) {
 	return component
 }
 
-private createChildDevice(device) {
-	def deviceId = device.deviceid
+private makeChildDeviceId(user, modelId) {
+	return "WITHINGS-${user}-${modelId}"
+}
+
+private createChildDevice(user, device) {
+	def deviceId = makeChildDeviceId(user, device.model_id)
 	def label = device.model
 	def createdDevice = getChildDevice(deviceId)
 	def component = createdDevice ? null : getComponent(device)
