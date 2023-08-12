@@ -1,0 +1,20 @@
+{
+  "packageName": "Withings Sleep Sensor Support",
+	"minimumHEVersion": "2.2.1",
+  "author": "Schwark Satyavolu",
+	"version": "1.0.0",
+	"releaseNotes": "",
+	"documentationLink": "https://github.com/schwark/hubitat-withings",
+	"communityLink": "",
+  "apps": [
+    {
+      "id": "05525f2d-af83-4add-a1da-f0077b836fd9",
+      "name": "Withings Sleep Sensor Support",
+      "namespace": "schwark",
+      "location": "https://raw.githubusercontent.com/schwark/hubitat-withings/main/withings.groovy",
+      "required": false,
+      "oauth": false,
+      "primary": false
+    }
+  ]
+}
